@@ -39,12 +39,31 @@ st.markdown(
     .review-title { font-weight: bold; font-size: 1.1em; margin-bottom: 4px; }
     .review-date { font-size: 0.9em; color: #aaa; margin-bottom: 8px; }
     </style>
-    """, unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True
 )
 
 st.title("🌌 Google Maps Contributor Analyzer")
 
 url = st.text_input("🔗 Collez un lien Google Maps contributor reviews :")
+
+# ---- Traduction simple des dates ----
+def translate_date(date_str: str) -> str:
+    mapping = {
+        "a week ago": "il y a une semaine",
+        "2 weeks ago": "il y a 2 semaines",
+        "3 weeks ago": "il y a 3 semaines",
+        "a month ago": "il y a un mois",
+        "2 months ago": "il y a 2 mois",
+        "3 months ago": "il y a 3 mois",
+        "a year ago": "il y a un an",
+        "years ago": "il y a plusieurs années",
+        "days ago": "il y a quelques jours",
+    }
+    for en, fr in mapping.items():
+        if en in date_str:
+            return date_str.replace(en, fr)
+    return date_str
 
 # ---- SCRAPER ----
 async def scrape_contributor(url):
@@ -88,21 +107,23 @@ async def scrape_contributor(url):
                 if k in ["avis", "photos", "réponses"]:
                     contributor["contributions"][k] = int(m.group(1))
 
-        # ---- Charger 100% des avis ----
+        # ---- Charger les avis ----
         reviews = {}
         last_count = -1
         same_count_rounds = 0
         while True:
             count = await page.locator("div[data-review-id]").count()
+            if count < 20:  # optimisation -> peu d'avis, on stop
+                break
             if count == last_count:
                 same_count_rounds += 1
             else:
                 same_count_rounds = 0
-            if same_count_rounds >= 3:  # si 3 tours sans nouvel avis, stop
+            if same_count_rounds >= 3:
                 break
             last_count = count
             await page.mouse.wheel(0, 3000)
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(1000)
 
         cards = page.locator("div[data-review-id]")
         total = await cards.count()
@@ -112,16 +133,17 @@ async def scrape_contributor(url):
             if not review_id or review_id in reviews:
                 continue
 
-            # Nom + adresse
-            title = None
-            address = None
+            # Nom + adresse + catégorie
+            title, address, category = None, None, None
             try:
                 place_block = await card.locator("div[role='link']").first.text_content()
                 if place_block:
                     parts = place_block.split("\n")
-                    title = parts[0]
-                    if len(parts) > 1:
+                    if len(parts) >= 2:
+                        title = parts[0]
                         address = parts[1]
+                    if len(parts) >= 3:
+                        category = parts[2]
             except:
                 pass
 
@@ -131,15 +153,10 @@ async def scrape_contributor(url):
                 spans = await card.locator("span").all_text_contents()
                 for s in spans:
                     if "il y a" in s or "ago" in s:
-                        date = s
+                        date = translate_date(s)
                         break
             except:
                 pass
-
-            # Texte
-            snippet = (await card.text_content()) or ""
-            clean_snippet = snippet.split("Translated by Google")[0]
-            clean_snippet = re.sub(r"Visited.*", "", clean_snippet).strip()
 
             # Note
             rating = None
@@ -153,11 +170,10 @@ async def scrape_contributor(url):
                 pass
 
             reviews[review_id] = {
-                "review_id": review_id,
                 "title": title.strip() if title else "Lieu inconnu",
                 "address": address.strip() if address else "",
+                "category": category.strip() if category else "",
                 "date": date.strip() if date else "",
-                "snippet": clean_snippet,
                 "rating": rating
             }
 
@@ -166,7 +182,7 @@ async def scrape_contributor(url):
 
 # ---- RUN ----
 if url:
-    with st.spinner("⏳ Extraction en cours... (peut durer quelques secondes)"):
+    with st.spinner("⏳ Extraction en cours..."):
         try:
             contributor, reviews = asyncio.run(scrape_contributor(url))
 
@@ -197,11 +213,11 @@ if url:
                 stars = "⭐" * int(r["rating"]) if r["rating"] else "❓"
                 st.markdown(f"""
                     <div class="review-card">
-                        <div class="review-title">📍 {r["title"]}</div>
-                        <div class="review-date">⏳ {r["date"]}</div>
-                        <div class="review-stars">{stars}</div>
+                        <div class="review-title">🏢 {r["title"]}</div>
+                        <div class="review-date">🏷️ {r["category"]}</div>
                         <div class="review-date">🏠 {r["address"]}</div>
-                        <p>💬 {r["snippet"]}</p>
+                        <div class="review-stars">{stars}</div>
+                        <div class="review-date">⏳ {r["date"]}</div>
                     </div>
                 """, unsafe_allow_html=True)
 
