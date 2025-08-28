@@ -1,93 +1,100 @@
 import streamlit as st
-from urllib.parse import urlparse, parse_qs
+import asyncio
+from playwright.async_api import async_playwright
 import re
-import uuid
-import time
+from urllib.parse import urlparse, parse_qs
 from datetime import datetime
+import uuid
 
-# Configuration de la page
-st.set_page_config(page_title="Google Maps Review Analyzer", layout="wide")
-
-st.title("🔎 Analyseur de lien Google Maps Contributor Reviews")
+st.set_page_config(page_title="Google Maps Contributor Scraper", layout="wide")
+st.title("🔎 Analyseur Google Maps Contributor")
 
 url = st.text_input("Collez un lien Google Maps contributor reviews :")
 
+async def scrape_contributor(url):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
+
+        # Attente que le profil charge
+        await page.wait_for_selector("div[role='main']", timeout=15000)
+
+        # Récupération infos contributeur
+        name = await page.locator("div[data-attribution-id] span").first.text_content()
+        thumbnail = await page.locator("img[alt*='Photo de profil'], img[alt*='Profile']").first.get_attribute("src")
+        stats = await page.locator("div[data-testid='contribution-stat']").all_text_contents()
+
+        contributor_info = {
+            "name": name.strip() if name else "Inconnu",
+            "thumbnail": thumbnail,
+            "points": None,
+            "level": None,
+            "local_guide": "Local Guide" in " ".join(stats),
+            "contributions": {}
+        }
+
+        # Essai d’extraire points & niveau
+        for s in stats:
+            if "points" in s.lower():
+                contributor_info["points"] = int(re.sub(r"[^0-9]", "", s))
+            if "niveau" in s.lower() or "level" in s.lower():
+                contributor_info["level"] = int(re.sub(r"[^0-9]", "", s))
+
+        # Contributions (avis, photos…)
+        for s in stats:
+            parts = s.split("·")
+            for part in parts:
+                kv = part.strip().split(" ")
+                if len(kv) == 2:
+                    k, v = kv
+                    contributor_info["contributions"][v.lower()] = int(re.sub(r"[^0-9]", "", k))
+
+        # Scroll pour charger les avis
+        reviews = []
+        review_cards = page.locator("div[data-review-id]")
+        count = await review_cards.count()
+        for i in range(count):
+            r = review_cards.nth(i)
+            review_id = await r.get_attribute("data-review-id")
+            snippet = await r.text_content()
+            place = await r.locator("div[role='link']").first.text_content()
+            rating_el = await r.locator("span[role='img']").first.get_attribute("aria-label")
+            rating = None
+            if rating_el and "étoile" in rating_el:
+                rating = int(re.search(r"([0-9])", rating_el).group(1))
+            reviews.append({
+                "review_id": review_id,
+                "place": place.strip() if place else None,
+                "snippet": snippet.strip() if snippet else None,
+                "rating": rating
+            })
+
+        await browser.close()
+
+        return contributor_info, reviews
+
+
 if url:
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
+    try:
+        contributor_info, reviews = asyncio.run(scrape_contributor(url))
 
-    # Extraction contributor_id
-    user_id_match = re.search(r"contrib/(\d+)/reviews", parsed.path)
-    contributor_id = user_id_match.group(1) if user_id_match else None
+        search_id = uuid.uuid4().hex[:24]
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Langues par défaut
-    hl = query_params.get("hl", ["fr"])[0]
-    gl = query_params.get("gl", ["fr"])[0]
+        response = {
+            "search_metadata": {
+                "id": search_id,
+                "status": "Success",
+                "created_at": timestamp,
+                "processed_at": timestamp,
+                "google_maps_contributor_reviews_url": url,
+            },
+            "contributor": contributor_info,
+            "reviews": reviews
+        }
 
-    # Métadonnées factices
-    search_id = uuid.uuid4().hex[:24]
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        st.json(response)
 
-    # Réponse JSON mockée (à enrichir plus tard avec scraping si besoin)
-    response = {
-        "search_metadata": {
-            "id": search_id,
-            "status": "Success",
-            "json_endpoint": f"https://api.example.com/searches/{search_id}.json",
-            "created_at": timestamp,
-            "processed_at": timestamp,
-            "google_maps_contributor_reviews_url": f"https://www.google.com/maps/contrib/{contributor_id}/reviews?gl={gl}&hl={hl}",
-            "raw_html_file": f"https://api.example.com/searches/{search_id}.html",
-            "prettify_html_file": f"https://api.example.com/searches/{search_id}.prettify",
-            "total_time_taken": round(time.perf_counter(), 2)
-        },
-        "search_parameters": {
-            "engine": "google_maps_contributor_reviews",
-            "gl": gl,
-            "hl": hl,
-            "contributor_id": contributor_id
-        },
-        "contributor": {
-            "name": "Mock User",
-            "thumbnail": "https://via.placeholder.com/120",
-            "points": 77,
-            "level": 3,
-            "local_guide": True,
-            "contributions": {
-                "avis": 2,
-                "photos": 0,
-                "vidéos": 0
-            }
-        },
-        "reviews": [
-            {
-                "place_info": {
-                    "title": "Entreprise Exemple",
-                    "address": "123 Rue Fictive, Paris",
-                    "gps_coordinates": {
-                        "latitude": 48.8566,
-                        "longitude": 2.3522
-                    },
-                    "type": "Restaurant",
-                    "thumbnail": "https://via.placeholder.com/200",
-                    "data_id": "0x123456789abcdef"
-                },
-                "date": "il y a 2 mois",
-                "snippet": "Super expérience, je recommande !",
-                "review_id": "mock_review_1",
-                "rating": 5,
-                "likes": 2,
-                "link": "https://www.google.com/maps/reviews/data=mock1",
-                "response": {
-                    "date": "il y a 2 mois",
-                    "snippet": "Merci pour votre avis positif !"
-                }
-            }
-        ]
-    }
-
-    st.subheader("Résultat JSON")
-    st.json(response)
-
-st.markdown("---")
-st.caption("⚡ Version démo mockée. Peut être étendue avec du scraping pour avoir de vraies données.")
+    except Exception as e:
+        st.error(f"Erreur : {e}")
