@@ -3,60 +3,92 @@ import subprocess
 import streamlit as st
 import asyncio
 from playwright.async_api import async_playwright
-from urllib.parse import urlparse
 from datetime import datetime
 import uuid
 import re
 
-# 🚀 Auto-install Chromium (Streamlit Cloud)
+# 🚀 Auto-install Chromium pour Streamlit Cloud
 if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright/chromium")):
     try:
         subprocess.run(["playwright", "install", "chromium"], check=True)
     except Exception as e:
         st.error(f"Erreur installation Chromium : {e}")
 
+# ---- CONFIG ----
 st.set_page_config(page_title="Google Maps Contributor Analyzer", layout="wide")
 
-# ---- UI HEADER ----
+# ---- DARK MODE STYLE ----
 st.markdown(
     """
     <style>
+    body {
+        background-color: #0e1117;
+        color: #fafafa;
+    }
+    .title {
+        font-size: 2.2em;
+        font-weight: bold;
+        color: #61dafb;
+        text-align: center;
+        margin-bottom: 30px;
+    }
     .profile-card {
-        display: flex; 
-        align-items: center; 
-        gap: 20px; 
-        padding: 20px; 
-        border-radius: 15px; 
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        padding: 25px;
+        border-radius: 15px;
+        background: linear-gradient(135deg, #1f1c2c, #928dab);
         color: white;
-        margin-bottom: 20px;
+        margin-bottom: 25px;
+        text-align: center;
     }
-    .profile-card img {
-        border-radius: 50%;
-        width: 100px;
-        height: 100px;
-        object-fit: cover;
-        border: 3px solid white;
+    .profile-card h2 {
+        font-size: 1.8em;
+        margin-bottom: 5px;
     }
-    .review-card {
-        border: 1px solid #eee;
+    .badge {
+        display: inline-block;
+        padding: 5px 12px;
+        border-radius: 30px;
+        background: #61dafb;
+        color: black;
+        font-weight: bold;
+        font-size: 0.9em;
+        margin: 5px;
+    }
+    .contrib-card {
+        background: #1a1d29;
         border-radius: 12px;
         padding: 15px;
-        margin-bottom: 15px;
-        background-color: white;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        text-align: center;
+        color: #fafafa;
+        margin: 10px;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.4);
     }
-    .stars {
-        color: gold;
-        font-size: 18px;
+    .contrib-value {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #61dafb;
+    }
+    .review-card {
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 18px;
+        background: #1c1f2b;
+        color: #ddd;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .review-stars {
+        color: #FFD700;
+        font-size: 1.2em;
+        margin-bottom: 8px;
     }
     </style>
-    """, unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True
 )
 
-st.title("🔎 Google Maps Contributor Analyzer")
+st.markdown('<div class="title">🌌 Google Maps Contributor Analyzer</div>', unsafe_allow_html=True)
 
-url = st.text_input("Collez un lien Google Maps contributor reviews :")
+url = st.text_input("🔗 Collez un lien Google Maps contributor reviews :")
 
 # ---- SCRAPER ----
 async def scrape_contributor(url):
@@ -76,23 +108,10 @@ async def scrape_contributor(url):
             except:
                 continue
 
-        # Thumbnail
-        thumbnail = None
-        try:
-            thumbnail = await page.locator("header img").first.get_attribute("src")
-        except:
-            pass
-
-        # Profil complet (bloc de stats)
-        header_text = ""
-        try:
-            header_text = await page.locator("body").inner_text()
-        except:
-            pass
+        header_text = await page.locator("body").inner_text()
 
         contributor = {
             "name": name.strip() if name else "Inconnu",
-            "thumbnail": thumbnail,
             "points": None,
             "level": None,
             "local_guide": "Local Guide" in header_text,
@@ -126,8 +145,6 @@ async def scrape_contributor(url):
             if not review_id or review_id in reviews:
                 continue
             snippet = (await card.text_content()) or ""
-
-            # Rating
             rating = None
             try:
                 star = await card.locator("span[role='img']").first.get_attribute("aria-label")
@@ -155,17 +172,13 @@ if url:
 
             # ---- UI PROFILE ----
             st.markdown('<div class="profile-card">', unsafe_allow_html=True)
-            if contributor["thumbnail"]:
-                st.markdown(f'<img src="{contributor["thumbnail"]}" alt="photo">', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<img src="https://via.placeholder.com/100" alt="no photo">', unsafe_allow_html=True)
-            st.markdown(f"""
-                <div>
-                    <h2>{contributor["name"]}</h2>
-                    <p>⭐ Niveau {contributor.get("level") or "?"} | {contributor.get("points") or "?"} points</p>
-                    <p>{'🌍 Local Guide' if contributor["local_guide"] else ''}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<h2>{contributor['name']}</h2>", unsafe_allow_html=True)
+            st.markdown(
+                f"<p>⭐ Niveau {contributor.get('level') or '?'} | {contributor.get('points') or '?'} points</p>",
+                unsafe_allow_html=True
+            )
+            if contributor["local_guide"]:
+                st.markdown('<span class="badge">🌍 Local Guide</span>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
             # ---- UI CONTRIBUTIONS ----
@@ -173,7 +186,11 @@ if url:
                 st.subheader("📊 Contributions")
                 cols = st.columns(len(contributor["contributions"]))
                 for i, (k, v) in enumerate(contributor["contributions"].items()):
-                    cols[i].metric(k.capitalize(), v)
+                    with cols[i]:
+                        st.markdown('<div class="contrib-card">', unsafe_allow_html=True)
+                        st.markdown(f"<div class='contrib-value'>{v}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<p>{k.capitalize()}</p>", unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
 
             # ---- UI REVIEWS ----
             st.subheader("📝 Avis publiés")
@@ -181,8 +198,8 @@ if url:
                 stars = "⭐" * int(r["rating"]) if r["rating"] else "❓"
                 st.markdown(f"""
                     <div class="review-card">
-                        <div class="stars">{stars}</div>
-                        <p>{r["snippet"][:500]}...</p>
+                        <div class="review-stars">{stars}</div>
+                        <p>{r["snippet"][:800]}...</p>
                     </div>
                 """, unsafe_allow_html=True)
 
