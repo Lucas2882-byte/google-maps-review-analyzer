@@ -5,6 +5,15 @@ import re
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 import uuid
+import os
+import subprocess
+
+# 📥 Forcer l’installation de Chromium si absent (Streamlit Cloud)
+if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright/chromium")):
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print("⚠️ Erreur pendant l'installation automatique de Chromium :", e)
 
 st.set_page_config(page_title="Google Maps Contributor Scraper", layout="wide")
 st.title("🔎 Analyseur Google Maps Contributor")
