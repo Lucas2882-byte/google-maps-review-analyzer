@@ -25,11 +25,6 @@ st.markdown(
         color: white; margin-bottom: 25px; text-align: center;
     }
     .profile-card h2 { font-size: 1.8em; margin-bottom: 5px; }
-    .badge {
-        display: inline-block; padding: 6px 14px;
-        border-radius: 30px; background: #61dafb; color: black;
-        font-weight: bold; font-size: 0.9em; margin: 5px;
-    }
     .contrib-card {
         background: #1a1d29; border-radius: 12px; padding: 15px;
         text-align: center; color: #fafafa; margin: 10px;
@@ -44,8 +39,7 @@ st.markdown(
     .review-title { font-weight: bold; font-size: 1.1em; margin-bottom: 4px; }
     .review-date { font-size: 0.9em; color: #aaa; margin-bottom: 8px; }
     </style>
-    """,
-    unsafe_allow_html=True
+    """, unsafe_allow_html=True
 )
 
 st.title("🌌 Google Maps Contributor Analyzer")
@@ -86,43 +80,63 @@ async def scrape_contributor(url):
         match_lvl = re.search(r"Niveau\s+(\d+)", header_text, re.IGNORECASE)
         if match_lvl: contributor["level"] = int(match_lvl.group(1))
 
-        # Contributions (avis, photos…)
+        # Contributions (avis, photos, réponses)
         for line in header_text.split("\n"):
             m = re.match(r"(\d+)\s+([A-Za-zéû]+)", line.strip())
             if m:
                 k = m.group(2).lower()
-                if k in ["avis", "photos"]:  # garder seulement avis et photos
+                if k in ["avis", "photos", "réponses"]:
                     contributor["contributions"][k] = int(m.group(1))
 
-        # Avis
-        for _ in range(5):
-            await page.mouse.wheel(0, 2000)
-            await page.wait_for_timeout(1000)
-
+        # ---- Charger 100% des avis ----
         reviews = {}
+        last_count = -1
+        same_count_rounds = 0
+        while True:
+            count = await page.locator("div[data-review-id]").count()
+            if count == last_count:
+                same_count_rounds += 1
+            else:
+                same_count_rounds = 0
+            if same_count_rounds >= 3:  # si 3 tours sans nouvel avis, stop
+                break
+            last_count = count
+            await page.mouse.wheel(0, 3000)
+            await page.wait_for_timeout(1500)
+
         cards = page.locator("div[data-review-id]")
-        count = await cards.count()
-        for i in range(count):
+        total = await cards.count()
+        for i in range(total):
             card = cards.nth(i)
             review_id = await card.get_attribute("data-review-id")
             if not review_id or review_id in reviews:
                 continue
 
-            # Nom de l’entreprise
+            # Nom + adresse
             title = None
+            address = None
             try:
-                title = await card.locator("div[role='link']").first.text_content()
+                place_block = await card.locator("div[role='link']").first.text_content()
+                if place_block:
+                    parts = place_block.split("\n")
+                    title = parts[0]
+                    if len(parts) > 1:
+                        address = parts[1]
             except:
                 pass
 
             # Date relative
             date = None
             try:
-                date = await card.locator("span").nth(1).text_content()
+                spans = await card.locator("span").all_text_contents()
+                for s in spans:
+                    if "il y a" in s or "ago" in s:
+                        date = s
+                        break
             except:
                 pass
 
-            # Texte de l’avis
+            # Texte
             snippet = (await card.text_content()) or ""
             clean_snippet = snippet.split("Translated by Google")[0]
             clean_snippet = re.sub(r"Visited.*", "", clean_snippet).strip()
@@ -141,6 +155,7 @@ async def scrape_contributor(url):
             reviews[review_id] = {
                 "review_id": review_id,
                 "title": title.strip() if title else "Lieu inconnu",
+                "address": address.strip() if address else "",
                 "date": date.strip() if date else "",
                 "snippet": clean_snippet,
                 "rating": rating
@@ -151,28 +166,24 @@ async def scrape_contributor(url):
 
 # ---- RUN ----
 if url:
-    with st.spinner("⏳ Extraction en cours..."):
+    with st.spinner("⏳ Extraction en cours... (peut durer quelques secondes)"):
         try:
             contributor, reviews = asyncio.run(scrape_contributor(url))
 
             # ---- UI PROFILE ----
             st.markdown('<div class="profile-card">', unsafe_allow_html=True)
             st.markdown(f"<h2>{contributor['name']}</h2>", unsafe_allow_html=True)
-            st.markdown(
-                f"<p>🏆 {contributor.get('points') or '?'} points</p>",
-                unsafe_allow_html=True
-            )
-            if contributor["level"]:
+            if contributor.get("level"):
                 st.markdown(f"<p>🎖️ Local Guide Niveau {contributor['level']}</p>", unsafe_allow_html=True)
-            elif contributor["local_guide"]:
-                st.markdown(f"<p>🌍 Local Guide</p>", unsafe_allow_html=True)
+            if contributor.get("points"):
+                st.markdown(f"<p>🏆 {contributor['points']} points</p>", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
             # ---- UI CONTRIBUTIONS ----
             if contributor["contributions"]:
                 st.subheader("📊 Contributions")
                 cols = st.columns(len(contributor["contributions"]))
-                icons = {"avis": "📝", "photos": "📷"}
+                icons = {"avis": "📝", "photos": "📷", "réponses": "💬"}
                 for i, (k, v) in enumerate(contributor["contributions"].items()):
                     with cols[i]:
                         st.markdown('<div class="contrib-card">', unsafe_allow_html=True)
@@ -186,10 +197,11 @@ if url:
                 stars = "⭐" * int(r["rating"]) if r["rating"] else "❓"
                 st.markdown(f"""
                     <div class="review-card">
-                        <div class="review-title">{r["title"]}</div>
-                        <div class="review-date">{r["date"]}</div>
+                        <div class="review-title">📍 {r["title"]}</div>
+                        <div class="review-date">⏳ {r["date"]}</div>
                         <div class="review-stars">{stars}</div>
-                        <p>{r["snippet"]}</p>
+                        <div class="review-date">🏠 {r["address"]}</div>
+                        <p>💬 {r["snippet"]}</p>
                     </div>
                 """, unsafe_allow_html=True)
 
