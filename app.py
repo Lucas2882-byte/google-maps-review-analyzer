@@ -3,90 +3,52 @@ import subprocess
 import streamlit as st
 import asyncio
 from playwright.async_api import async_playwright
-from datetime import datetime
-import uuid
 import re
 
-# 🚀 Auto-install Chromium pour Streamlit Cloud
+# 🚀 Auto-install Chromium (Streamlit Cloud)
 if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright/chromium")):
     try:
         subprocess.run(["playwright", "install", "chromium"], check=True)
     except Exception as e:
         st.error(f"Erreur installation Chromium : {e}")
 
-# ---- CONFIG ----
 st.set_page_config(page_title="Google Maps Contributor Analyzer", layout="wide")
 
-# ---- DARK MODE STYLE ----
+# ---- STYLES DARK MODE ----
 st.markdown(
     """
     <style>
-    body {
-        background-color: #0e1117;
-        color: #fafafa;
-    }
-    .title {
-        font-size: 2.2em;
-        font-weight: bold;
-        color: #61dafb;
-        text-align: center;
-        margin-bottom: 30px;
-    }
+    body { background-color: #0e1117; color: #fafafa; }
     .profile-card {
-        padding: 25px;
-        border-radius: 15px;
+        padding: 25px; border-radius: 15px;
         background: linear-gradient(135deg, #1f1c2c, #928dab);
-        color: white;
-        margin-bottom: 25px;
-        text-align: center;
+        color: white; margin-bottom: 25px; text-align: center;
     }
-    .profile-card h2 {
-        font-size: 1.8em;
-        margin-bottom: 5px;
-    }
+    .profile-card h2 { font-size: 1.8em; margin-bottom: 5px; }
     .badge {
-        display: inline-block;
-        padding: 5px 12px;
-        border-radius: 30px;
-        background: #61dafb;
-        color: black;
-        font-weight: bold;
-        font-size: 0.9em;
-        margin: 5px;
+        display: inline-block; padding: 6px 14px;
+        border-radius: 30px; background: #61dafb; color: black;
+        font-weight: bold; font-size: 0.9em; margin: 5px;
     }
     .contrib-card {
-        background: #1a1d29;
-        border-radius: 12px;
-        padding: 15px;
-        text-align: center;
-        color: #fafafa;
-        margin: 10px;
+        background: #1a1d29; border-radius: 12px; padding: 15px;
+        text-align: center; color: #fafafa; margin: 10px;
         box-shadow: 0 3px 8px rgba(0,0,0,0.4);
     }
-    .contrib-value {
-        font-size: 1.5em;
-        font-weight: bold;
-        color: #61dafb;
-    }
+    .contrib-value { font-size: 1.5em; font-weight: bold; color: #61dafb; }
     .review-card {
-        border-radius: 12px;
-        padding: 18px;
-        margin-bottom: 18px;
-        background: #1c1f2b;
-        color: #ddd;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        border-radius: 12px; padding: 18px; margin-bottom: 18px;
+        background: #1c1f2b; color: #ddd; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
-    .review-stars {
-        color: #FFD700;
-        font-size: 1.2em;
-        margin-bottom: 8px;
-    }
+    .review-stars { color: #FFD700; font-size: 1.2em; margin-bottom: 6px; }
+    .review-title { font-weight: bold; font-size: 1.1em; margin-bottom: 4px; }
+    .review-date { font-size: 0.9em; color: #aaa; margin-bottom: 8px; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.markdown('<div class="title">🌌 Google Maps Contributor Analyzer</div>', unsafe_allow_html=True)
+st.title("🌌 Google Maps Contributor Analyzer")
 
 url = st.text_input("🔗 Collez un lien Google Maps contributor reviews :")
 
@@ -121,15 +83,16 @@ async def scrape_contributor(url):
         # Points & Level
         match_pts = re.search(r"(\d+)\s*points", header_text, re.IGNORECASE)
         if match_pts: contributor["points"] = int(match_pts.group(1))
-
         match_lvl = re.search(r"Niveau\s+(\d+)", header_text, re.IGNORECASE)
         if match_lvl: contributor["level"] = int(match_lvl.group(1))
 
-        # Contributions diverses
+        # Contributions (avis, photos…)
         for line in header_text.split("\n"):
             m = re.match(r"(\d+)\s+([A-Za-zéû]+)", line.strip())
             if m:
-                contributor["contributions"][m.group(2).lower()] = int(m.group(1))
+                k = m.group(2).lower()
+                if k in ["avis", "photos"]:  # garder seulement avis et photos
+                    contributor["contributions"][k] = int(m.group(1))
 
         # Avis
         for _ in range(5):
@@ -144,7 +107,27 @@ async def scrape_contributor(url):
             review_id = await card.get_attribute("data-review-id")
             if not review_id or review_id in reviews:
                 continue
+
+            # Nom de l’entreprise
+            title = None
+            try:
+                title = await card.locator("div[role='link']").first.text_content()
+            except:
+                pass
+
+            # Date relative
+            date = None
+            try:
+                date = await card.locator("span").nth(1).text_content()
+            except:
+                pass
+
+            # Texte de l’avis
             snippet = (await card.text_content()) or ""
+            clean_snippet = snippet.split("Translated by Google")[0]
+            clean_snippet = re.sub(r"Visited.*", "", clean_snippet).strip()
+
+            # Note
             rating = None
             try:
                 star = await card.locator("span[role='img']").first.get_attribute("aria-label")
@@ -157,7 +140,9 @@ async def scrape_contributor(url):
 
             reviews[review_id] = {
                 "review_id": review_id,
-                "snippet": snippet.strip(),
+                "title": title.strip() if title else "Lieu inconnu",
+                "date": date.strip() if date else "",
+                "snippet": clean_snippet,
                 "rating": rating
             }
 
@@ -174,21 +159,24 @@ if url:
             st.markdown('<div class="profile-card">', unsafe_allow_html=True)
             st.markdown(f"<h2>{contributor['name']}</h2>", unsafe_allow_html=True)
             st.markdown(
-                f"<p>⭐ Niveau {contributor.get('level') or '?'} | {contributor.get('points') or '?'} points</p>",
+                f"<p>🏆 {contributor.get('points') or '?'} points</p>",
                 unsafe_allow_html=True
             )
-            if contributor["local_guide"]:
-                st.markdown('<span class="badge">🌍 Local Guide</span>', unsafe_allow_html=True)
+            if contributor["level"]:
+                st.markdown(f"<p>🎖️ Local Guide Niveau {contributor['level']}</p>", unsafe_allow_html=True)
+            elif contributor["local_guide"]:
+                st.markdown(f"<p>🌍 Local Guide</p>", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
             # ---- UI CONTRIBUTIONS ----
             if contributor["contributions"]:
                 st.subheader("📊 Contributions")
                 cols = st.columns(len(contributor["contributions"]))
+                icons = {"avis": "📝", "photos": "📷"}
                 for i, (k, v) in enumerate(contributor["contributions"].items()):
                     with cols[i]:
                         st.markdown('<div class="contrib-card">', unsafe_allow_html=True)
-                        st.markdown(f"<div class='contrib-value'>{v}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='contrib-value'>{icons.get(k, '📊')} {v}</div>", unsafe_allow_html=True)
                         st.markdown(f"<p>{k.capitalize()}</p>", unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -198,8 +186,10 @@ if url:
                 stars = "⭐" * int(r["rating"]) if r["rating"] else "❓"
                 st.markdown(f"""
                     <div class="review-card">
+                        <div class="review-title">{r["title"]}</div>
+                        <div class="review-date">{r["date"]}</div>
                         <div class="review-stars">{stars}</div>
-                        <p>{r["snippet"][:800]}...</p>
+                        <p>{r["snippet"]}</p>
                     </div>
                 """, unsafe_allow_html=True)
 
