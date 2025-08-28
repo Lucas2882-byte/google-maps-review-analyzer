@@ -5,7 +5,7 @@ import asyncio
 from playwright.async_api import async_playwright
 import re
 
-# 🚀 Auto-install Chromium (Streamlit Cloud)
+# 🚀 Auto-install Chromium (utile pour Streamlit Cloud)
 if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright/chromium")):
     try:
         subprocess.run(["playwright", "install", "chromium"], check=True)
@@ -62,7 +62,7 @@ def translate_date(date_str: str) -> str:
     }
     for en, fr in mapping.items():
         if en in date_str:
-            return date_str.replace(en, fr)
+            return fr
     return date_str
 
 # ---- SCRAPER ----
@@ -73,7 +73,7 @@ async def scrape_contributor(url):
         await page.goto(url, timeout=60000)
         await page.wait_for_selector("body", timeout=15000)
 
-        # Nom
+        # Nom du contributeur
         name = None
         for sel in ["h1", "h2", "span[role='heading']"]:
             try:
@@ -90,30 +90,32 @@ async def scrape_contributor(url):
             "points": None,
             "level": None,
             "local_guide": "Local Guide" in header_text,
-            "contributions": {}
+            "contributions": {"avis": 0, "photos": 0, "réponses": 0}
         }
 
-        # Points & Level
+        # Points & Niveau
         match_pts = re.search(r"(\d+)\s*points", header_text, re.IGNORECASE)
-        if match_pts: contributor["points"] = int(match_pts.group(1))
+        if match_pts:
+            contributor["points"] = int(match_pts.group(1))
         match_lvl = re.search(r"Niveau\s+(\d+)", header_text, re.IGNORECASE)
-        if match_lvl: contributor["level"] = int(match_lvl.group(1))
+        if match_lvl:
+            contributor["level"] = int(match_lvl.group(1))
 
-        # Contributions (avis, photos, réponses)
+        # Contributions
         for line in header_text.split("\n"):
             m = re.match(r"(\d+)\s+([A-Za-zéû]+)", line.strip())
             if m:
                 k = m.group(2).lower()
-                if k in ["avis", "photos", "réponses"]:
+                if k in contributor["contributions"]:
                     contributor["contributions"][k] = int(m.group(1))
 
-        # ---- Charger les avis ----
+        # ---- Récupération des avis ----
         reviews = {}
         last_count = -1
         same_count_rounds = 0
         while True:
             count = await page.locator("div[data-review-id]").count()
-            if count < 20:  # optimisation -> peu d'avis, on stop
+            if count < 20:  # optimisation → stop si peu d'avis
                 break
             if count == last_count:
                 same_count_rounds += 1
@@ -123,7 +125,7 @@ async def scrape_contributor(url):
                 break
             last_count = count
             await page.mouse.wheel(0, 3000)
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(800)
 
         cards = page.locator("div[data-review-id]")
         total = await cards.count()
@@ -136,11 +138,12 @@ async def scrape_contributor(url):
             # Nom + adresse + catégorie
             title, address, category = None, None, None
             try:
-                place_block = await card.locator("div[role='link']").first.text_content()
-                if place_block:
-                    parts = place_block.split("\n")
-                    if len(parts) >= 2:
+                block = await card.locator("div[role='link']").first.text_content()
+                if block:
+                    parts = block.split("\n")
+                    if len(parts) >= 1:
                         title = parts[0]
+                    if len(parts) >= 2:
                         address = parts[1]
                     if len(parts) >= 3:
                         category = parts[2]
@@ -186,7 +189,7 @@ if url:
         try:
             contributor, reviews = asyncio.run(scrape_contributor(url))
 
-            # ---- UI PROFILE ----
+            # ---- PROFIL ----
             st.markdown('<div class="profile-card">', unsafe_allow_html=True)
             st.markdown(f"<h2>{contributor['name']}</h2>", unsafe_allow_html=True)
             if contributor.get("level"):
@@ -195,19 +198,18 @@ if url:
                 st.markdown(f"<p>🏆 {contributor['points']} points</p>", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # ---- UI CONTRIBUTIONS ----
-            if contributor["contributions"]:
-                st.subheader("📊 Contributions")
-                cols = st.columns(len(contributor["contributions"]))
-                icons = {"avis": "📝", "photos": "📷", "réponses": "💬"}
-                for i, (k, v) in enumerate(contributor["contributions"].items()):
-                    with cols[i]:
-                        st.markdown('<div class="contrib-card">', unsafe_allow_html=True)
-                        st.markdown(f"<div class='contrib-value'>{icons.get(k, '📊')} {v}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<p>{k.capitalize()}</p>", unsafe_allow_html=True)
-                        st.markdown('</div>', unsafe_allow_html=True)
+            # ---- CONTRIBUTIONS ----
+            st.subheader("📊 Contributions")
+            cols = st.columns(3)
+            icons = {"avis": "📝", "photos": "📷", "réponses": "💬"}
+            for i, (k, v) in enumerate(contributor["contributions"].items()):
+                with cols[i]:
+                    st.markdown('<div class="contrib-card">', unsafe_allow_html=True)
+                    st.markdown(f"<div class='contrib-value'>{icons.get(k, '📊')} {v}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<p>{k.capitalize()}</p>", unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-            # ---- UI REVIEWS ----
+            # ---- AVIS ----
             st.subheader("📝 Avis publiés")
             for r in reviews:
                 stars = "⭐" * int(r["rating"]) if r["rating"] else "❓"
